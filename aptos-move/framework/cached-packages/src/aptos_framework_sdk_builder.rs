@@ -76,6 +76,13 @@ pub enum EntryFunctionCall {
         cap_update_table: Vec<u8>,
     },
 
+    AccountRotateAuthenticationKeyWithRotationCapability {
+        rotation_cap_offerer_address: AccountAddress,
+        new_scheme: u8,
+        new_public_key_bytes: Vec<u8>,
+        cap_update_table: Vec<u8>,
+    },
+
     /// Basic account creation methods.
     AptosAccountCreateAccount {
         auth_key: AccountAddress,
@@ -507,6 +514,17 @@ impl EntryFunctionCall {
                 cap_rotate_key,
                 cap_update_table,
             ),
+            AccountRotateAuthenticationKeyWithRotationCapability {
+                rotation_cap_offerer_address,
+                new_scheme,
+                new_public_key_bytes,
+                cap_update_table,
+            } => account_rotate_authentication_key_with_rotation_capability(
+                rotation_cap_offerer_address,
+                new_scheme,
+                new_public_key_bytes,
+                cap_update_table,
+            ),
             AptosAccountCreateAccount { auth_key } => aptos_account_create_account(auth_key),
             AptosAccountTransfer { to, amount } => aptos_account_transfer(to, amount),
             AptosCoinClaimMintCapability {} => aptos_coin_claim_mint_capability(),
@@ -853,6 +871,31 @@ pub fn account_rotate_authentication_key(
             bcs::to_bytes(&to_scheme).unwrap(),
             bcs::to_bytes(&to_public_key_bytes).unwrap(),
             bcs::to_bytes(&cap_rotate_key).unwrap(),
+            bcs::to_bytes(&cap_update_table).unwrap(),
+        ],
+    ))
+}
+
+pub fn account_rotate_authentication_key_with_rotation_capability(
+    rotation_cap_offerer_address: AccountAddress,
+    new_scheme: u8,
+    new_public_key_bytes: Vec<u8>,
+    cap_update_table: Vec<u8>,
+) -> TransactionPayload {
+    TransactionPayload::EntryFunction(EntryFunction::new(
+        ModuleId::new(
+            AccountAddress::new([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 1,
+            ]),
+            ident_str!("account").to_owned(),
+        ),
+        ident_str!("rotate_authentication_key_with_rotation_capability").to_owned(),
+        vec![],
+        vec![
+            bcs::to_bytes(&rotation_cap_offerer_address).unwrap(),
+            bcs::to_bytes(&new_scheme).unwrap(),
+            bcs::to_bytes(&new_public_key_bytes).unwrap(),
             bcs::to_bytes(&cap_update_table).unwrap(),
         ],
     ))
@@ -2191,6 +2234,23 @@ mod decoder {
         }
     }
 
+    pub fn account_rotate_authentication_key_with_rotation_capability(
+        payload: &TransactionPayload,
+    ) -> Option<EntryFunctionCall> {
+        if let TransactionPayload::EntryFunction(script) = payload {
+            Some(
+                EntryFunctionCall::AccountRotateAuthenticationKeyWithRotationCapability {
+                    rotation_cap_offerer_address: bcs::from_bytes(script.args().get(0)?).ok()?,
+                    new_scheme: bcs::from_bytes(script.args().get(1)?).ok()?,
+                    new_public_key_bytes: bcs::from_bytes(script.args().get(2)?).ok()?,
+                    cap_update_table: bcs::from_bytes(script.args().get(3)?).ok()?,
+                },
+            )
+        } else {
+            None
+        }
+    }
+
     pub fn aptos_account_create_account(payload: &TransactionPayload) -> Option<EntryFunctionCall> {
         if let TransactionPayload::EntryFunction(script) = payload {
             Some(EntryFunctionCall::AptosAccountCreateAccount {
@@ -2974,6 +3034,10 @@ static SCRIPT_FUNCTION_DECODER_MAP: once_cell::sync::Lazy<EntryFunctionDecoderMa
         map.insert(
             "account_rotate_authentication_key".to_string(),
             Box::new(decoder::account_rotate_authentication_key),
+        );
+        map.insert(
+            "account_rotate_authentication_key_with_rotation_capability".to_string(),
+            Box::new(decoder::account_rotate_authentication_key_with_rotation_capability),
         );
         map.insert(
             "aptos_account_create_account".to_string(),
