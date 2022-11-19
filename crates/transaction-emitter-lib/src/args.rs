@@ -80,6 +80,7 @@ pub enum TransactionType {
     P2P,
     AccountGeneration,
     NftMintAndTransfer,
+    PublishPackage,
 }
 
 impl Default for TransactionType {

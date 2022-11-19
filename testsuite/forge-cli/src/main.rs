@@ -203,6 +203,12 @@ fn main() -> Result<()> {
     let duration = Duration::from_secs(args.duration_secs as u64);
     let suite_name: &str = args.suite.as_ref();
 
+    // cheat and change suite to be "publishing"
+    let suite_name = if suite_name != "compat" {
+        "publishing"
+    } else {
+        "compat"
+    };
     let runtime = Runtime::new()?;
     match args.cli_cmd {
         // cmd input for test
@@ -549,7 +555,7 @@ fn single_test_suite(test_name: &str) -> Result<ForgeConfig<'static>> {
             .with_network_tests(vec![&FullNodeRebootStressTest])
             .with_emit_job(EmitJobRequest::default().mode(EmitJobMode::ConstTps { tps: 5000 }))
             .with_success_criteria(SuccessCriteria::new(2000).add_wait_for_catchup_s(600)),
-        "account_creation" | "nft_mint" => config
+        "account_creation" | "nft_mint" | "publishing" => config
             .with_network_tests(vec![&PerformanceBenchmarkWithFN])
             .with_initial_validator_count(NonZeroUsize::new(5).unwrap())
             .with_initial_fullnode_count(3)
@@ -563,12 +569,14 @@ fn single_test_suite(test_name: &str) -> Result<ForgeConfig<'static>> {
                     })
                     .transaction_type(if test_name == "account_creation" {
                         TransactionType::AccountGeneration
-                    } else {
+                    } else if test_name == "nft_mint" {
                         TransactionType::NftMintAndTransfer
+                    } else {
+                        TransactionType::PublishPackage
                     }),
             )
             .with_success_criteria(
-                SuccessCriteria::new(4000)
+                SuccessCriteria::new(200)
                     .add_no_restarts()
                     .add_wait_for_catchup_s(240)
                     .add_chain_progress(StateProgressThreshold {

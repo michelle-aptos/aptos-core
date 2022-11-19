@@ -43,7 +43,8 @@ use crate::{
         account_generator::AccountGeneratorCreator,
         nft_mint_and_transfer::NFTMintAndTransferGeneratorCreator,
         p2p_transaction_generator::P2PTransactionGeneratorCreator,
-        transaction_mix_generator::TxnMixGeneratorCreator, TransactionGeneratorCreator,
+        publish_modules::PublishPackageCreator, transaction_mix_generator::TxnMixGeneratorCreator,
+        TransactionGeneratorCreator,
     },
 };
 use aptos_sdk::transaction_builder::aptos_stdlib;
@@ -458,6 +459,11 @@ impl TxnEmitter {
                     )
                     .await,
                 ),
+                TransactionType::PublishPackage => Box::new(PublishPackageCreator::new(
+                    self.from_rng(),
+                    txn_factory.clone(),
+                    req.gas_price,
+                )),
             };
             txn_generator_creator_mix.push((txn_generator_creator, weight));
         }
