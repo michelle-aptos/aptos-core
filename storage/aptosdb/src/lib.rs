@@ -67,6 +67,9 @@ use aptos_infallible::Mutex;
 use aptos_logger::prelude::*;
 use aptos_rocksdb_options::gen_rocksdb_options;
 use aptos_schemadb::{SchemaBatch, DB};
+use aptos_types::contract_event::ContractEvent;
+use aptos_types::proof::TransactionAccumulatorRangeProof;
+use aptos_types::write_set::WriteSet;
 use aptos_types::{
     account_address::AccountAddress,
     account_config::{new_block_event_key, NewBlockEvent},
@@ -1147,6 +1150,90 @@ impl DbReader for AptosDB {
     ) -> Result<Vec<EventWithVersion>> {
         gauged_api("get_events", || {
             self.get_events_by_event_key(event_key, start, order, limit, ledger_version)
+        })
+    }
+
+    fn get_transaction_iterator(
+        &self,
+        start_version: Version,
+        limit: u64,
+    ) -> Result<Box<dyn Iterator<Item = Result<Transaction>> + '_>> {
+        gauged_api("get_transaction_iterator", || {
+            error_if_too_many_requested(limit, MAX_REQUEST_LIMIT)?;
+            self.error_if_ledger_pruned("Transaction", start_version)?;
+
+            let iter = self
+                .transaction_store
+                .get_transaction_iter(start_version, limit as usize)?;
+            Ok(Box::new(iter) as Box<dyn Iterator<Item = Result<Transaction>> + '_>)
+        })
+    }
+
+    fn get_transaction_info_iterator(
+        &self,
+        start_version: Version,
+        limit: u64,
+    ) -> Result<Box<dyn Iterator<Item = Result<TransactionInfo>> + '_>> {
+        gauged_api("get_transaction_info_iterator", || {
+            error_if_too_many_requested(limit, MAX_REQUEST_LIMIT)?;
+            self.error_if_ledger_pruned("Transaction", start_version)?;
+
+            let iter = self
+                .ledger_store
+                .get_transaction_info_iter(start_version, limit as usize)?;
+            Ok(Box::new(iter) as Box<dyn Iterator<Item = Result<TransactionInfo>> + '_>)
+        })
+    }
+
+    fn get_events_iterator(
+        &self,
+        start_version: Version,
+        limit: u64,
+    ) -> Result<Box<dyn Iterator<Item = Result<Vec<ContractEvent>>> + '_>> {
+        gauged_api("get_events_iterator", || {
+            error_if_too_many_requested(limit, MAX_REQUEST_LIMIT)?;
+            self.error_if_ledger_pruned("Transaction", start_version)?;
+
+            let iter = self
+                .event_store
+                .get_events_by_version_iter(start_version, limit as usize)?;
+            Ok(Box::new(iter)
+                as Box<
+                    dyn Iterator<Item = Result<Vec<ContractEvent>>> + '_,
+                >)
+        })
+    }
+
+    fn get_write_set_iterator(
+        &self,
+        start_version: Version,
+        limit: u64,
+    ) -> Result<Box<dyn Iterator<Item = Result<WriteSet>> + '_>> {
+        gauged_api("get_write_set_iterator", || {
+            error_if_too_many_requested(limit, MAX_REQUEST_LIMIT)?;
+            self.error_if_ledger_pruned("Transaction", start_version)?;
+
+            let iter = self
+                .transaction_store
+                .get_write_set_iter(start_version, limit as usize)?;
+            Ok(Box::new(iter) as Box<dyn Iterator<Item = Result<WriteSet>> + '_>)
+        })
+    }
+
+    fn get_transaction_accumulator_range_proof(
+        &self,
+        first_version: Version,
+        limit: u64,
+        ledger_version: Version,
+    ) -> Result<TransactionAccumulatorRangeProof> {
+        gauged_api("get_transaction_accumulator_range_proof", || {
+            self.error_if_ledger_pruned("Transaction", first_version)?;
+
+            self.ledger_store.get_transaction_range_proof(
+                Some(first_version),
+                limit,
+                ledger_version,
+            )
         })
     }
 
