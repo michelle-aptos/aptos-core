@@ -413,6 +413,7 @@ dependencies = [
  "anyhow",
  "aptos-aggregator",
  "aptos-infallible",
+ "aptos-logger",
  "aptos-metrics-core",
  "aptos-mvhashmap",
  "aptos-state-view",

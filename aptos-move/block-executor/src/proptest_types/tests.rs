@@ -6,10 +6,9 @@ use crate::{
     executor::BlockExecutor,
     proptest_types::types::{
         DeltaDataView, EmptyDataView, ExpectedOutput, KeyType, Task, Transaction, TransactionGen,
-        TransactionGenParams, ValueType, STORAGE_AGGREGATOR_VALUE,
+        TransactionGenParams, ValueType,
     },
 };
-use aptos_aggregator::delta_change_set::serialize;
 use claims::assert_ok;
 use num_cpus;
 use proptest::{
@@ -166,9 +165,10 @@ fn deltas_writes_mixed() {
     .expect("creating a new value should succeed")
     .current();
 
+    // Do not allow deletions as resolver can't apply delta to a deleted aggregator.
     let transactions: Vec<_> = transaction_gen
         .into_iter()
-        .map(|txn_gen| txn_gen.materialize_with_deltas(&universe, 15, true))
+        .map(|txn_gen| txn_gen.materialize_with_deltas(&universe, 15, false))
         .collect();
 
     let data_view = DeltaDataView::<KeyType<[u8; 32]>, ValueType<[u8; 32]>> {
@@ -224,18 +224,7 @@ fn deltas_resolver() {
         >::new(num_cpus::get())
         .execute_transactions_parallel((), &transactions, &data_view);
 
-        let (output, delta_resolver) = output.unwrap();
-        let resolved = delta_resolver.resolve(
-            (15..50)
-                .map(|i| {
-                    (
-                        KeyType(universe[i], false),
-                        Ok(Some(serialize(&STORAGE_AGGREGATOR_VALUE))),
-                    )
-                })
-                .collect(),
-            num_txns,
-        );
+        let (output, resolved) = output.unwrap();
 
         let baseline = ExpectedOutput::generate_baseline(&transactions, Some(resolved));
         baseline.assert_output(&Ok(output));
