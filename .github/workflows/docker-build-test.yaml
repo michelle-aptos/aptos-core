@@ -81,8 +81,8 @@ jobs:
     if: |
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'CICD:build-images') ||
-      contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-tests') ||
+      contains(github.event.pull_request.labels.*.name, 'CICD:build-') ||
+      contains(github.event.pull_request.labels.*.name, 'CICD:run-') ||
       github.event.pull_request.auto_merge != null ||
       contains(github.event.pull_request.body, '#e2e')
     runs-on: ubuntu-latest
@@ -118,6 +118,9 @@ jobs:
 
   rust-images-indexer:
     needs: [permission-check, determine-docker-build-metadata]
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'CICD:build-indexer-images') ||
+      contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-indexer-tests')
     uses: ./.github/workflows/docker-rust-build.yaml
     secrets: inherit
     with:
@@ -129,6 +132,9 @@ jobs:
 
   rust-images-failpoints:
     needs: [permission-check, determine-docker-build-metadata]
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'CICD:build-failpoints-images') ||
+      contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-failpoints-tests')
     uses: ./.github/workflows/docker-rust-build.yaml
     secrets: inherit
     with:
@@ -140,6 +146,9 @@ jobs:
 
   rust-images-performance:
     needs: [permission-check, determine-docker-build-metadata]
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'CICD:build-performance-images') ||
+      contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-performance-tests')
     uses: ./.github/workflows/docker-rust-build.yaml
     secrets: inherit
     with:
@@ -148,34 +157,64 @@ jobs:
       PROFILE: performance
       BUILD_ADDL_TESTING_IMAGES: true
 
+  rust-images-final:
+    needs:
+      [
+        determine-docker-build-metadata,
+        rust-images,
+        rust-images-indexer,
+        rust-images-failpoints,
+        rust-images-performance,
+      ]
+    if: always() # this ensures that the job will run even if the previous jobs were skipped
+    runs-on: ubuntu-latest
+    steps:
+      - name: fail if rust-images job failed
+        if: ${{ needs.rust-images.result == 'failure' }}
+        run: exit 1
+      - name: fail if rust-images-indexer job failed
+        if: ${{ needs.rust-images-indexer.result == 'failure' }}
+        run: exit 1
+      - name: fail if rust-images-failpoints job failed
+        if: ${{ needs.rust-images-failpoints.result == 'failure' }}
+        run: exit 1
+      - name: fail if rust-images-performance job failed
+        if: ${{ needs.rust-images-performance.result == 'failure' }}
+        run: exit 1
+    outputs:
+      rustImagesResult: ${{ needs.rust-images.result }}
+      rustImagesIndexerResult: ${{ needs.rust-images-indexer.result }}
+      rustImagesFailpointsResult: ${{ needs.rust-images-failpoints.result }}
+      rustImagesPerformanceResult: ${{ needs.rust-images-performance.result }}
+
   sdk-release:
-    needs: [rust-images, determine-docker-build-metadata]
+    needs: [rust-images-final]
     if: |
-      !contains(github.event.pull_request.labels.*.name, 'CICD:skip-sdk-integration-test') && (
       github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-tests') ||
       github.event.pull_request.auto_merge != null) ||
-      contains(github.event.pull_request.body, '#e2e')
+      contains(github.event.pull_request.body, '#e2e'
     uses: ./.github/workflows/sdk-release.yaml
     secrets: inherit
     with:
       GIT_SHA: ${{ needs.determine-docker-build-metadata.outputs.gitSha }}
 
   forge-e2e-test:
-    needs: [rust-images, rust-images-failpoints, determine-docker-build-metadata]
+    needs: [rust-images-final]
     if: |
-      !contains(github.event.pull_request.labels.*.name, 'CICD:skip-forge-e2e-test') && (
-        (github.event_name == 'push' && github.ref_name != 'main') ||
-        github.event_name == 'workflow_dispatch' ||
-        contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-tests') ||
-        github.event.pull_request.auto_merge != null ||
-        contains(github.event.pull_request.body, '#e2e')
-      )
+      (github.event_name == 'push' && github.ref_name != 'main') ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-tests') ||
+      github.event.pull_request.auto_merge != null ||
+      contains(github.event.pull_request.body, '#e2e')
     uses: ./.github/workflows/run-forge.yaml
     secrets: inherit
     with:
       GIT_SHA: ${{ needs.determine-docker-build-metadata.outputs.gitSha }}
+      FORGE_TEST_SUITE: land_blocking
+      IMAGE_TAG: ${{ needs.determine-docker-build-metadata.outputs.gitSha }}
+      FORGE_RUNNER_DURATION_SECS: 480
       COMMENT_HEADER: forge-e2e
       # Use the cache ID as the Forge namespace so we can limit Forge test concurrency on k8s, since Forge
       # test lifecycle is separate from that of GHA. This protects us from the case where many Forge tests are triggered
@@ -184,24 +223,42 @@ jobs:
 
   # Run e2e compat test against testnet branch
   forge-compat-test:
-    needs: [rust-images, rust-images-failpoints, determine-docker-build-metadata]
+    needs: [rust-images-final]
     if: |
-      !contains(github.event.pull_request.labels.*.name, 'CICD:skip-forge-e2e-test') && (
-        (github.event_name == 'push' && github.ref_name != 'main') ||
-        github.event_name == 'workflow_dispatch' ||
-        contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-tests') ||
-        github.event.pull_request.auto_merge != null ||
-        contains(github.event.pull_request.body, '#e2e')
-      )
+      (github.event_name == 'push' && github.ref_name != 'main') ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-tests') ||
+      github.event.pull_request.auto_merge != null ||
+      contains(github.event.pull_request.body, '#e2e')
     uses: ./.github/workflows/run-forge.yaml
     secrets: inherit
     with:
       GIT_SHA: ${{ needs.determine-docker-build-metadata.outputs.gitSha }}
       FORGE_TEST_SUITE: compat
-      IMAGE_TAG: testnet_2d8b1b57553d869190f61df1aaf7f31a8fc19a7b # test against the latest build on testnet branch
+      IMAGE_TAG: testnet_2d8b1b57553d869190f61df1aaf7f31a8fc19a7b # test against a previous testnet release
       FORGE_RUNNER_DURATION_SECS: 300
       COMMENT_HEADER: forge-compat
       # Use the cache ID as the Forge namespace so we can limit Forge test concurrency on k8s, since Forge
       # test lifecycle is separate from that of GHA. This protects us from the case where many Forge tests are triggered
       # by this GHA. If there is a Forge namespace collision, Forge will pre-empt the existing test running in the namespace.
       FORGE_NAMESPACE: forge-compat-${{ needs.determine-docker-build-metadata.outputs.targetCacheId }}
+
+  # Allows PR authors to manually trigger a Forge test with performance build on their PR
+  forge-performance-test:
+    needs: [rust-images-final]
+    if: |
+      (github.event_name == 'push' && github.ref_name != 'main') ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'CICD:run-e2e-performance-tests')
+    uses: ./.github/workflows/run-forge.yaml
+    secrets: inherit
+    with:
+      GIT_SHA: ${{ needs.determine-docker-build-metadata.outputs.gitSha }}
+      FORGE_TEST_SUITE: land_blocking
+      IMAGE_TAG: performance_${{ needs.determine-docker-build-metadata.outputs.gitSha }}
+      FORGE_RUNNER_DURATION_SECS: 480
+      COMMENT_HEADER: forge-performance
+      # Use the cache ID as the Forge namespace so we can limit Forge test concurrency on k8s, since Forge
+      # test lifecycle is separate from that of GHA. This protects us from the case where many Forge tests are triggered
+      # by this GHA. If there is a Forge namespace collision, Forge will pre-empt the existing test running in the namespace.
+      FORGE_NAMESPACE: forge-performance-${{ needs.determine-docker-build-metadata.outputs.targetCacheId }}
