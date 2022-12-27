@@ -82,7 +82,7 @@
 /mempool/ @bchocho
 
 # Owners for the `Network Stack`
-/networking @markuze
+/network/ @markuze
 
 # Owners for the `/state-sync` directory and all its subdirectories.
 /state-sync/ @joshlind
