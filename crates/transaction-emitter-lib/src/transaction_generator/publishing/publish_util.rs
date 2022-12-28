@@ -12,6 +12,8 @@ use aptos_sdk::{
 use move_binary_format::{access::ModuleAccess, CompiledModule};
 use rand::{rngs::StdRng, Rng};
 
+use super::module_simple::EntryPoints;
+
 // Information used to track a publisher and what allows to identify and
 // version the package published.
 #[derive(Clone, Debug)]
@@ -146,7 +148,7 @@ impl Package {
     }
 
     // Return a transaction to use the current package
-    pub fn use_transaction(
+    pub fn use_random_transaction(
         &self,
         rng: &mut StdRng,
         account: &mut LocalAccount,
@@ -161,6 +163,24 @@ impl Package {
                 account.sign_with_transaction_builder(
                     txn_factory.payload(payload).gas_unit_price(gas_price),
                 )
+            }
+        }
+    }
+
+    pub fn use_specific_transaction(
+        &self,
+        fun: EntryPoints,
+        account: &mut LocalAccount,
+        txn_factory: &TransactionFactory,
+        rng: Option<&mut StdRng>,
+        other: Option<AccountAddress>,
+    ) -> SignedTransaction {
+        match self {
+            Self::Simple(modules, _) => {
+                let module_id = modules[0].self_id();
+                // let payload = module_simple::rand_gen_function(rng, module_id);
+                let payload = module_simple::call_function(fun, module_id, rng, other);
+                account.sign_with_transaction_builder(txn_factory.payload(payload))
             }
         }
     }

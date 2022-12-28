@@ -555,7 +555,7 @@ fn single_test_suite(test_name: &str) -> Result<ForgeConfig<'static>> {
             .with_network_tests(vec![&FullNodeRebootStressTest])
             .with_emit_job(EmitJobRequest::default().mode(EmitJobMode::ConstTps { tps: 5000 }))
             .with_success_criteria(SuccessCriteria::new(2000).add_wait_for_catchup_s(600)),
-        "account_creation" | "nft_mint" | "publishing" => config
+        "account_creation" | "nft_mint" | "publishing" | "module_loading" => config
             .with_network_tests(vec![&PerformanceBenchmarkWithFN])
             .with_initial_validator_count(NonZeroUsize::new(5).unwrap())
             .with_initial_fullnode_count(3)
@@ -567,12 +567,12 @@ fn single_test_suite(test_name: &str) -> Result<ForgeConfig<'static>> {
                     .mode(EmitJobMode::MaxLoad {
                         mempool_backlog: 30000,
                     })
-                    .transaction_type(if test_name == "account_creation" {
-                        TransactionType::AccountGeneration
-                    } else if test_name == "nft_mint" {
-                        TransactionType::NftMintAndTransfer
-                    } else {
-                        TransactionType::PublishPackage
+                    .transaction_type(match test_name {
+                        "account_creation" => TransactionType::AccountGeneration,
+                        "nft_mint" => TransactionType::NftMintAndTransfer,
+                        "publish" => TransactionType::PublishPackage,
+                        "module_loading" => TransactionType::CallDifferentModules,
+                        _ => unreachable!(),
                     }),
             )
             .with_success_criteria(

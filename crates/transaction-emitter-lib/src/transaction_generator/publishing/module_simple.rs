@@ -100,7 +100,7 @@ pub fn scramble(module: &mut CompiledModule, fn_count: usize, rng: &mut StdRng) 
 //
 // List of entry points to expose
 //
-enum EntryPoints {
+pub enum EntryPoints {
     // 0 args
     Nop = 0,
     Step = 1,
@@ -155,14 +155,27 @@ impl TryFrom<u8> for EntryPoints {
     }
 }
 
-fn call_function(
+fn call_function_from_idx(
     fun_idx: u8,
-    rng: &mut StdRng,
     module_id: ModuleId,
+    rng: Option<&mut StdRng>,
     other: Option<AccountAddress>,
 ) -> TransactionPayload {
-    match EntryPoints::try_from(fun_idx).expect("Must pick a function in range, bogus id generated")
-    {
+    call_function(
+        EntryPoints::try_from(fun_idx).expect("Must pick a function in range, bogus id generated"),
+        module_id,
+        rng,
+        other,
+    )
+}
+
+pub fn call_function(
+    fun: EntryPoints,
+    module_id: ModuleId,
+    rng: Option<&mut StdRng>,
+    other: Option<AccountAddress>,
+) -> TransactionPayload {
+    match fun {
         // 0 args
         EntryPoints::Nop => get_payload_void(module_id, ident_str!("nop").to_owned()),
         EntryPoints::Step => get_payload_void(module_id, ident_str!("step").to_owned()),
@@ -173,15 +186,17 @@ fn call_function(
         EntryPoints::Double => get_payload_void(module_id, ident_str!("double").to_owned()),
         EntryPoints::Half => get_payload_void(module_id, ident_str!("half").to_owned()),
         // 1 arg
-        EntryPoints::Loopy => loopy(rng, module_id),
-        EntryPoints::GetFromRandomConst => get_from_random_const(rng, module_id),
-        EntryPoints::SetId => set_id(rng, module_id),
-        EntryPoints::SetName => set_name(rng, module_id),
+        EntryPoints::Loopy => loopy(rng.expect("Must provide RNG"), module_id),
+        EntryPoints::GetFromRandomConst => {
+            get_from_random_const(rng.expect("Must provide RNG"), module_id)
+        }
+        EntryPoints::SetId => set_id(rng.expect("Must provide RNG"), module_id),
+        EntryPoints::SetName => set_name(rng.expect("Must provide RNG"), module_id),
         // 2 args, second arg existing account address with data
         EntryPoints::Maximize => maximize(module_id, other.expect("Must provide other")),
         EntryPoints::Minimize => minimize(module_id, other.expect("Must provide other")),
         // 3 args
-        EntryPoints::MakeOrChange => make_or_change(rng, module_id),
+        EntryPoints::MakeOrChange => make_or_change(rng.expect("Must provide RNG"), module_id),
     }
 }
 
@@ -191,22 +206,22 @@ pub fn any_function(
     other: Option<AccountAddress>,
 ) -> TransactionPayload {
     let fun_idx = rng.gen_range(ENTRY_POINTS_START, ENTRY_POINTS_END + 1);
-    call_function(fun_idx, rng, module_id, other)
+    call_function_from_idx(fun_idx, module_id, Some(rng), other)
 }
 
 pub fn rand_simple_function(rng: &mut StdRng, module_id: ModuleId) -> TransactionPayload {
     let fun_idx = rng.gen_range(ZERO_ARG_ENTRY_POINTS_START, EntryPoints::SetName as u8);
-    call_function(fun_idx, rng, module_id, None)
+    call_function_from_idx(fun_idx, module_id, Some(rng), None)
 }
 
 pub fn zero_args_function(rng: &mut StdRng, module_id: ModuleId) -> TransactionPayload {
     let fun_idx = rng.gen_range(ZERO_ARG_ENTRY_POINTS_START, ZERO_ARG_ENTRY_POINTS_END + 1);
-    call_function(fun_idx, rng, module_id, None)
+    call_function_from_idx(fun_idx, module_id, Some(rng), None)
 }
 
 pub fn rand_gen_function(rng: &mut StdRng, module_id: ModuleId) -> TransactionPayload {
     let fun_idx = rng.gen_range(ZERO_ARG_ENTRY_POINTS_START, ONE_ARG_ENTRY_POINTS_END + 1);
-    call_function(fun_idx, rng, module_id, None)
+    call_function_from_idx(fun_idx, module_id, Some(rng), None)
 }
 
 //

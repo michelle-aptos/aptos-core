@@ -81,6 +81,7 @@ pub enum TransactionType {
     AccountGeneration,
     NftMintAndTransfer,
     PublishPackage,
+    CallDifferentModules,
 }
 
 impl Default for TransactionType {

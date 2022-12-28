@@ -43,7 +43,8 @@ use crate::{
         account_generator::AccountGeneratorCreator,
         nft_mint_and_transfer::NFTMintAndTransferGeneratorCreator,
         p2p_transaction_generator::P2PTransactionGeneratorCreator,
-        publish_modules::PublishPackageCreator, transaction_mix_generator::TxnMixGeneratorCreator,
+        publish_modules::{CallDifferentModulesCreator, PublishPackageCreator},
+        transaction_mix_generator::TxnMixGeneratorCreator,
         TransactionGeneratorCreator,
     },
 };
@@ -422,10 +423,9 @@ impl TxnEmitter {
             .create_accounts(&req, &mode_params, num_accounts)
             .await?;
         self.accounts.append(&mut new_accounts);
-        let all_accounts = self.accounts.split_off(self.accounts.len() - num_accounts);
+        let mut all_accounts = self.accounts.split_off(self.accounts.len() - num_accounts);
         let all_addresses: Vec<_> = all_accounts.iter().map(|d| d.address()).collect();
         let all_addresses = Arc::new(RwLock::new(all_addresses));
-        let mut all_accounts = all_accounts.into_iter();
         let stop = Arc::new(AtomicBool::new(false));
         let stats = Arc::new(DynamicStatsTracking::new(stats_tracking_phases));
         let tokio_handle = Handle::current();
@@ -464,6 +464,16 @@ impl TxnEmitter {
                     txn_factory.clone(),
                     req.gas_price,
                 )),
+                TransactionType::CallDifferentModules => Box::new(
+                    CallDifferentModulesCreator::new(
+                        self.from_rng(),
+                        txn_factory.clone(),
+                        &mut all_accounts,
+                        req.rest_clients[0].clone(),
+                        mode_params.max_submit_batch_size,
+                    )
+                    .await,
+                ),
             };
             txn_generator_creator_mix.push((txn_generator_creator, weight));
         }
@@ -491,10 +501,11 @@ impl TxnEmitter {
             total_workers
         );
 
+        let mut all_accounts_iter = all_accounts.into_iter();
         let mut workers = vec![];
         for _ in 0..workers_per_endpoint {
             for client in &req.rest_clients {
-                let accounts = (&mut all_accounts)
+                let accounts = (&mut all_accounts_iter)
                     .take(mode_params.accounts_per_worker)
                     .collect::<Vec<_>>();
                 let stop = stop.clone();
