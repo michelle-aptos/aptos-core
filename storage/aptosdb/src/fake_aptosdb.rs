@@ -7,12 +7,9 @@ use crate::{
     metrics::{LEDGER_VERSION, NEXT_BLOCK_EPOCH},
     AptosDB,
 };
-use anyhow::{ensure, format_err, Result};
+use anyhow::{format_err, Result};
 use aptos_crypto::{hash::CryptoHash, HashValue};
-use aptos_infallible::Mutex;
-use aptos_storage_interface::{
-    state_delta::StateDelta, DbReader, DbWriter, ExecutedTrees, MAX_REQUEST_LIMIT,
-};
+use aptos_storage_interface::{DbReader, DbWriter, ExecutedTrees, MAX_REQUEST_LIMIT};
 use aptos_types::{
     access_path::AccessPath,
     account_address::AccountAddress,
@@ -22,8 +19,8 @@ use aptos_types::{
     event::{EventHandle, EventKey},
     ledger_info::LedgerInfoWithSignatures,
     proof::{
-        accumulator::InMemoryAccumulator, AccumulatorConsistencyProof, AccumulatorRangeProof,
-        SparseMerkleProofExt, TransactionAccumulatorProof, TransactionAccumulatorRangeProof,
+        AccumulatorConsistencyProof, AccumulatorRangeProof, SparseMerkleProofExt,
+        TransactionAccumulatorProof, TransactionAccumulatorRangeProof,
         TransactionAccumulatorSummary, TransactionInfoListWithProof, TransactionInfoWithProof,
     },
     state_proof::StateProof,
@@ -44,52 +41,7 @@ use arc_swap::ArcSwapOption;
 use dashmap::DashMap;
 use itertools::zip_eq;
 use move_core_types::move_resource::MoveStructType;
-use std::{collections::HashMap, mem::swap, sync::Arc};
-
-pub struct FakeBufferedState {
-    // state until the latest checkpoint.
-    state_until_checkpoint: Option<Box<StateDelta>>,
-    // state after the latest checkpoint.
-    state_after_checkpoint: StateDelta,
-}
-
-impl FakeBufferedState {
-    pub fn update(
-        &mut self,
-        updates_until_next_checkpoint_since_current_option: Option<
-            HashMap<StateKey, Option<StateValue>>,
-        >,
-        mut new_state_after_checkpoint: StateDelta,
-    ) -> Result<()> {
-        ensure!(
-            new_state_after_checkpoint.base_version >= self.state_after_checkpoint.base_version
-        );
-        if let Some(updates_until_next_checkpoint_since_current) =
-            updates_until_next_checkpoint_since_current_option
-        {
-            self.state_after_checkpoint
-                .updates_since_base
-                .extend(updates_until_next_checkpoint_since_current);
-            self.state_after_checkpoint.current = new_state_after_checkpoint.base.clone();
-            self.state_after_checkpoint.current_version = new_state_after_checkpoint.base_version;
-            swap(
-                &mut self.state_after_checkpoint,
-                &mut new_state_after_checkpoint,
-            );
-            if let Some(ref mut delta) = self.state_until_checkpoint {
-                delta.merge(new_state_after_checkpoint);
-            } else {
-                self.state_until_checkpoint = Some(Box::new(new_state_after_checkpoint));
-            }
-        } else {
-            ensure!(
-                new_state_after_checkpoint.base_version == self.state_after_checkpoint.base_version
-            );
-            self.state_after_checkpoint = new_state_after_checkpoint;
-        }
-        Ok(())
-    }
-}
+use std::sync::Arc;
 
 /// Provides a "fake" AptosDB.
 pub struct FakeAptosDB {
@@ -105,7 +57,6 @@ pub struct FakeAptosDB {
     // A map of account address to the highest executed sequence number
     account_seq_num: Arc<DashMap<AccountAddress, u64>>,
     ledger_commit_lock: std::sync::Mutex<()>,
-    buffered_state: Mutex<FakeBufferedState>,
 }
 
 impl FakeAptosDB {
@@ -118,10 +69,6 @@ impl FakeAptosDB {
             latest_txn_info: ArcSwapOption::from(None),
             account_seq_num: Arc::new(DashMap::new()),
             ledger_commit_lock: std::sync::Mutex::new(()),
-            buffered_state: Mutex::new(FakeBufferedState {
-                state_until_checkpoint: None,
-                state_after_checkpoint: StateDelta::new_empty(),
-            }),
         }
     }
 }
@@ -155,67 +102,6 @@ impl DbWriter for FakeAptosDB {
                     base_state_version,
                     ledger_info_with_sigs,
                     sync_commit,
-                    latest_in_memory_state.clone(),
-                )?;
-            }
-
-            {
-                let mut buffered_state = self.buffered_state.lock();
-                ensure!(
-                    base_state_version == buffered_state.state_after_checkpoint.base_version,
-                    "base_state_version {:?} does not equal to the base_version {:?} in buffered state with current version {:?}",
-                    base_state_version,
-                    buffered_state.state_after_checkpoint.base_version,
-                    buffered_state.state_after_checkpoint.current_version,
-                );
-
-                // Ensure the incoming committing requests are always consecutive and the version in
-                // buffered state is consistent with that in db.
-                let next_version_in_buffered_state = buffered_state
-                    .state_after_checkpoint
-                    .current_version
-                    .map(|version| version + 1)
-                    .unwrap_or(0);
-                let num_transactions_in_db = self
-                    .get_latest_transaction_info_option()?
-                    .map(|(version, _)| version + 1)
-                    .unwrap_or(0);
-                ensure!(
-                     num_transactions_in_db == first_version && num_transactions_in_db == next_version_in_buffered_state,
-                    "The first version {} passed in, the next version in buffered state {} and the next version in db {} are inconsistent.",
-                    first_version,
-                    next_version_in_buffered_state,
-                    num_transactions_in_db,
-                );
-
-                let updates_until_latest_checkpoint_since_current = if let Some(
-                    latest_checkpoint_version,
-                ) =
-                    latest_in_memory_state.base_version
-                {
-                    if latest_checkpoint_version >= first_version {
-                        let idx = (latest_checkpoint_version - first_version) as usize;
-                        ensure!(
-                            txns_to_commit[idx].is_state_checkpoint(),
-                            "The new latest snapshot version passed in {:?} does not match with the last checkpoint version in txns_to_commit {:?}",
-                            latest_checkpoint_version,
-                            first_version + idx as u64
-                        );
-                        Some(
-                            txns_to_commit[..=idx]
-                                .iter()
-                                .flat_map(|txn_to_commit| txn_to_commit.state_updates().clone())
-                                .collect(),
-                        )
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                buffered_state.update(
-                    updates_until_latest_checkpoint_since_current,
                     latest_in_memory_state,
                 )?;
             }
@@ -526,13 +412,7 @@ impl DbReader for FakeAptosDB {
     }
 
     fn get_latest_state_checkpoint_version(&self) -> Result<Option<Version>> {
-        gauged_api("get_latest_state_checkpoint_version", || {
-            Ok(self
-                .buffered_state
-                .lock()
-                .state_after_checkpoint
-                .current_version)
-        })
+        Ok(Some(self.get_latest_ledger_info()?.ledger_info().version()))
     }
 
     fn get_state_snapshot_before(
@@ -636,21 +516,7 @@ impl DbReader for FakeAptosDB {
     }
 
     fn get_latest_executed_trees(&self) -> Result<ExecutedTrees> {
-        gauged_api("get_latest_executed_trees", || {
-            let buffered_state = self.buffered_state.lock();
-            let num_txns = buffered_state
-                .state_after_checkpoint
-                .current_version
-                .map_or(0, |v| v + 1);
-
-            let mut transaction_accumulator = InMemoryAccumulator::new_empty();
-            transaction_accumulator.num_leaves = num_txns;
-            let executed_trees = ExecutedTrees::new(
-                buffered_state.state_after_checkpoint.clone(),
-                Arc::new(transaction_accumulator),
-            );
-            Ok(executed_trees)
-        })
+        self.inner.get_latest_executed_trees()
     }
 
     fn get_epoch_ending_ledger_info(&self, known_version: u64) -> Result<LedgerInfoWithSignatures> {
